@@ -48,6 +48,7 @@ expense-tracker/
 │   ├── reset-password.html
 │   └── signup.html
 ├── README.md
+├── vercel.json
 └── package.json
 ```
 
@@ -83,6 +84,25 @@ http://localhost:3001
 ```
 
 The backend serves the frontend files, so the login page is available from the root URL.
+
+## Deploy on GitHub and Vercel
+
+1. Create a new GitHub repository and push this project:
+
+```bash
+git init
+git add .
+git commit -m "Prepare expense tracker for Vercel"
+git branch -M main
+git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPOSITORY.git
+git push -u origin main
+```
+
+2. In Vercel, import the GitHub repository. Keep the framework preset as `Other` and leave the build command empty.
+3. Add the `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `OPENROUTER_SITE_URL`, and `OPENROUTER_APP_NAME` environment variables in Vercel Project Settings.
+4. Deploy. The `vercel.json` file routes both the frontend and `/api/*` requests to the Express app.
+
+Vercel serverless storage is temporary. The JSON files work for local development, but signup and expense changes should use a hosted database for reliable production persistence.
 
 ## Environment Variables
 
