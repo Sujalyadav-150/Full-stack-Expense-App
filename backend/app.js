@@ -6,7 +6,10 @@ const fs = require("fs");
 require("dotenv").config();
 
 const app = express();
-const dataDirectory = path.join(__dirname, "data");
+const sourceDataDirectory = path.join(__dirname, "data");
+const dataDirectory = process.env.VERCEL === "1"
+  ? path.join("/tmp", "expense-tracker-data")
+  : sourceDataDirectory;
 const usersFile = path.join(dataDirectory, "users.json");
 const expensesFile = path.join(dataDirectory, "expenses.json");
 const expenseCategories = [
@@ -25,6 +28,15 @@ const expenseCategories = [
 ];
 
 fs.mkdirSync(dataDirectory, { recursive: true });
+
+if (dataDirectory !== sourceDataDirectory) {
+  for (const fileName of ["users.json", "expenses.json"]) {
+    const targetFile = path.join(dataDirectory, fileName);
+    if (!fs.existsSync(targetFile)) {
+      fs.copyFileSync(path.join(sourceDataDirectory, fileName), targetFile);
+    }
+  }
+}
 
 function readData(filePath, fallback) {
   try {
