@@ -18,37 +18,5 @@
   "sujal6399@gmail.com": {
     "name": "sujal",
     "password": "607e83f95f11d11112cdef586ef9ae501e95f15fc0f7b2a406c4f5118957a1f0d08515451ff001614590bf2ed7aa3e7d28388207fc9171a0405c88be553c341e"
-  },
-  "test-user-1789797556372@example.com": {
-    "name": "Test Runner",
-    "password": "1036acd4d7ab521766d80e3d892b8a80a7f216cbc6d1061b0af7ca54bc366b7dba15f07cfb588e3d6d0d2eb880d1b85a11f97174c734475c60a856a77258cc1d"
-  },
-  "test-user-1789797867242@example.com": {
-    "name": "Test Runner",
-    "password": "1036acd4d7ab521766d80e3d892b8a80a7f216cbc6d1061b0af7ca54bc366b7dba15f07cfb588e3d6d0d2eb880d1b85a11f97174c734475c60a856a77258cc1d"
-  },
-  "test-user-1789802599971@example.com": {
-    "name": "Test Runner",
-    "password": "1036acd4d7ab521766d80e3d892b8a80a7f216cbc6d1061b0af7ca54bc366b7dba15f07cfb588e3d6d0d2eb880d1b85a11f97174c734475c60a856a77258cc1d"
-  },
-  "test-user-1789806553084@example.com": {
-    "name": "Test Runner",
-    "password": "1036acd4d7ab521766d80e3d892b8a80a7f216cbc6d1061b0af7ca54bc366b7dba15f07cfb588e3d6d0d2eb880d1b85a11f97174c734475c60a856a77258cc1d"
-  },
-  "test-user-1789809570230@example.com": {
-    "name": "Test Runner",
-    "password": "1036acd4d7ab521766d80e3d892b8a80a7f216cbc6d1061b0af7ca54bc366b7dba15f07cfb588e3d6d0d2eb880d1b85a11f97174c734475c60a856a77258cc1d"
-  },
-  "tmp@example.com": {
-    "name": "Tmp",
-    "password": "81591c2349d7b90bf23ee071503081c167f980663b0322338d9b9bdff3d3016fcd1119d528d66b32d9343599120bbc55c3f3538c7bc7bafbef19da5d667cf64c"
-  },
-  "testauth@example.com": {
-    "name": "TestUser",
-    "password": "$2b$10$Xy7NgGE5701AwdDMYaLQCuZoeG3aWAr03/wMbSCXzPBY4tH6EZWfi"
-  },
-  "test-user-1789822923722@example.com": {
-    "name": "Test Runner",
-    "password": "1036acd4d7ab521766d80e3d892b8a80a7f216cbc6d1061b0af7ca54bc366b7dba15f07cfb588e3d6d0d2eb880d1b85a11f97174c734475c60a856a77258cc1d"
   }
 }
