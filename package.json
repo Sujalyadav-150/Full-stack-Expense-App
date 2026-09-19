@@ -6,7 +6,8 @@
   "main": "backend/app.js",
   "scripts": {
     "start": "node backend/app.js",
-    "dev": "node backend/app.js"
+    "dev": "node backend/app.js",
+    "test": "node backend/tests/forgot-password.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

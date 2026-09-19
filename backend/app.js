@@ -329,12 +329,15 @@ app.post("/api/auth/forgot-password", (req, res) => {
 app.post("/api/auth/reset-password", async (req, res) => {
   const token = String(req.body.token || "").trim();
   const password = String(req.body.password || "").trim();
+  const startTime = Date.now();
 
   if (!token || !password) {
+    console.log(`[reset-password] ${Date.now() - startTime}ms - missing token or password`);
     return res.status(400).json({ message: "Reset token and password are required." });
   }
 
   if (password.length < 6) {
+    console.log(`[reset-password] ${Date.now() - startTime}ms - short password`);
     return res.status(400).json({ message: "Password must be at least 6 characters long." });
   }
 
@@ -348,34 +351,47 @@ app.post("/api/auth/reset-password", async (req, res) => {
     if (parts.length === 2) {
       try {
         const payloadStr = Buffer.from(parts[0], "base64url").toString("utf8");
-        const [id, email, expStr] = payloadStr.split(".");
+        const [id, emailFromPayload, expStr] = payloadStr.split(".");
         const expiresAt = Number(expStr);
 
-        if (id && email && Number.isFinite(expiresAt)) {
+        if (id && emailFromPayload && Number.isFinite(expiresAt)) {
           if (Date.now() > expiresAt) {
-            return res.status(400).json({ message: "Invalid or expired reset token." });
+            console.log(`[reset-password] ${Date.now() - startTime}ms - token expired`);
+          return res.status(400).json({ message: "Invalid or expired reset token." });
           }
 
-          const user = users.get(email);
-          if (!user) {
-            return res.status(400).json({ message: "User not found for this reset token." });
+          // Attempt to locate the token record first (covers email change scenario)
+          const matchedRecord = passwordResetTokens.find(
+            (record) => record.tokenHash === tokenHash || (id && record.id === id) || record.id === token
+          );
+          if (matchedRecord) {
+            resolvedEmail = matchedRecord.userId;
+            resolvedTokenId = matchedRecord.id;
           }
 
-          // Verify signature with current user.password hash
-          const hmac = crypto.createHmac("sha256", `${getResetSecret()}:${user.password}`);
-          hmac.update(payloadStr);
-          const expectedSig = hmac.digest("hex");
-
-          const sigBuf = Buffer.from(parts[1], "hex");
-          const expBuf = Buffer.from(expectedSig, "hex");
-
-          if (sigBuf.length === expBuf.length && crypto.timingSafeEqual(sigBuf, expBuf)) {
-            resolvedEmail = email;
-            resolvedTokenId = id;
+          // If we have a resolved email (from record), verify signature against that user's current password hash
+          if (resolvedEmail) {
+            const userObj = users.get(resolvedEmail);
+            if (userObj) {
+              const hmac = crypto.createHmac("sha256", `${getResetSecret()}:${userObj.password}`);
+              hmac.update(payloadStr);
+              const expectedSig = hmac.digest("hex");
+              const sigBuf = Buffer.from(parts[1], "hex");
+              const expBuf = Buffer.from(expectedSig, "hex");
+              if (sigBuf.length === expBuf.length && crypto.timingSafeEqual(sigBuf, expBuf)) {
+                // signature valid, keep resolvedEmail
+              } else {
+                // signature mismatch, invalidate resolvedEmail
+                resolvedEmail = null;
+                resolvedTokenId = null;
+              }
+            }
           }
+
+          // If still not resolved, fall back to legacy in‑memory store (unchanged)
         }
       } catch {
-        // Malformed token format
+        // Malformed token format – ignore and let later checks handle it
       }
     }
   }
@@ -390,6 +406,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
 
   // If token record exists and was already used, reject
   if (matchedRecord && matchedRecord.usedAt !== null && matchedRecord.usedAt !== undefined) {
+    console.log(`[reset-password] ${Date.now() - startTime}ms - token already used`);
     return res.status(400).json({ message: "Invalid or expired reset token." });
   }
 
@@ -397,7 +414,8 @@ app.post("/api/auth/reset-password", async (req, res) => {
   if (matchedRecord && matchedRecord.expiresAt) {
     const recExpiry = new Date(matchedRecord.expiresAt).getTime();
     if (!Number.isNaN(recExpiry) && Date.now() > recExpiry) {
-      return res.status(400).json({ message: "Invalid or expired reset token." });
+      console.log(`[reset-password] ${Date.now() - startTime}ms - token record expired`);
+return res.status(400).json({ message: "Invalid or expired reset token." });
     }
   }
 
@@ -421,12 +439,14 @@ app.post("/api/auth/reset-password", async (req, res) => {
 
   // Reject if token is unrecognized or invalid
   if (!resolvedEmail) {
-    return res.status(400).json({ message: "Invalid or expired reset token." });
+    console.log(`[reset-password] ${Date.now() - startTime}ms - token unrecognized`);
+return res.status(400).json({ message: "Invalid or expired reset token." });
   }
 
   const user = users.get(resolvedEmail);
   if (!user) {
-    return res.status(400).json({ message: "User not found for this reset token." });
+    console.log(`[reset-password] ${Date.now() - startTime}ms - user not found`);
+return res.status(400).json({ message: "User not found for this reset token." });
   }
 
   try {
@@ -456,7 +476,8 @@ app.post("/api/auth/reset-password", async (req, res) => {
       }
     });
 
-    return res.status(200).json({ message: "Password reset successfully." });
+    console.log(`[reset-password] ${Date.now() - startTime}ms - success`);
+return res.status(200).json({ message: "Password reset successfully." });
   } catch (error) {
     const statusCode = error.statusCode || 500;
     return res.status(statusCode).json({ message: error.message || "Could not reset password." });
