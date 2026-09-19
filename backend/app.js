@@ -3,17 +3,13 @@ const cors = require("cors");
 const path = require("path");
 const crypto = require("crypto");
 const fs = require("fs");
+const bcrypt = require("bcryptjs");
 require("dotenv").config();
-const PasswordResetToken = require("./models/PasswordResetToken");
 
 const app = express();
-const sourceDataDirectory = path.join(__dirname, "data");
-const dataDirectory = process.env.VERCEL === "1"
-  ? path.join("/tmp", "expense-tracker-data")
-  : sourceDataDirectory;
+const dataDirectory = path.join(__dirname, "data");
 const usersFile = path.join(dataDirectory, "users.json");
 const expensesFile = path.join(dataDirectory, "expenses.json");
-const resetTokensFile = path.join(dataDirectory, "password-reset-tokens.json");
 const expenseCategories = [
   "Food",
   "Groceries",
@@ -31,20 +27,6 @@ const expenseCategories = [
 
 fs.mkdirSync(dataDirectory, { recursive: true });
 
-if (dataDirectory !== sourceDataDirectory) {
-  for (const fileName of ["users.json", "expenses.json", "password-reset-tokens.json"]) {
-    const targetFile = path.join(dataDirectory, fileName);
-    if (!fs.existsSync(targetFile)) {
-      const sourceFile = path.join(sourceDataDirectory, fileName);
-      if (fs.existsSync(sourceFile)) {
-        fs.copyFileSync(sourceFile, targetFile);
-      } else {
-        fs.writeFileSync(targetFile, JSON.stringify(fileName.endsWith("tokens.json") ? [] : {}, null, 2));
-      }
-    }
-  }
-}
-
 function readData(filePath, fallback) {
   try {
     return JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -59,17 +41,7 @@ function writeData(filePath, data) {
 
 const users = new Map(Object.entries(readData(usersFile, {})));
 const expenses = readData(expensesFile, {});
-const resetTokens = new Map();
-const passwordResetTokens = readData(resetTokensFile, []);
 let nextExpenseId = Object.values(expenses).flat().reduce((highestId, expense) => Math.max(highestId, expense.id || 0), 0) + 1;
-
-function getResetSecret() {
-  return (
-    process.env.RESET_TOKEN_SECRET ||
-    process.env.JWT_SECRET ||
-    "expense-tracker-secure-reset-salt-secret-key"
-  );
-}
 
 function deepClone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -86,25 +58,18 @@ function restoreSnapshot(snapshot) {
   }
 
   Object.assign(expenses, snapshot.expenses);
-
-  passwordResetTokens.length = 0;
-  if (Array.isArray(snapshot.passwordResetTokens)) {
-    passwordResetTokens.push(...snapshot.passwordResetTokens);
-  }
 }
 
 async function runTransaction(operation) {
   const snapshot = {
     users: deepClone(Object.fromEntries(users)),
-    expenses: deepClone(expenses),
-    passwordResetTokens: deepClone(passwordResetTokens)
+    expenses: deepClone(expenses)
   };
 
   try {
     await operation();
     writeData(usersFile, Object.fromEntries(users));
     writeData(expensesFile, expenses);
-    writeData(resetTokensFile, passwordResetTokens);
     return true;
   } catch (error) {
     restoreSnapshot(snapshot);
@@ -112,56 +77,9 @@ async function runTransaction(operation) {
   }
 }
 
-function hashPassword(password) {
-  return crypto.scryptSync(password, "expense-tracker-salt", 64).toString("hex");
-}
-
-function createResetToken(email) {
-  const tokenId = crypto.randomUUID();
-  const expiresAt = Date.now() + 24 * 60 * 60 * 1000;
-  const user = users.get(email);
-  const currentPasswordHash = user ? user.password : "";
-
-  // Combine unique token ID, email, expiry, and random salt
-  const randomSalt = crypto.randomBytes(16).toString("hex");
-  const payloadData = `${tokenId}.${email}.${expiresAt}.${randomSalt}`;
-
-  // HMAC-SHA256 signature using secret + current password hash
-  const hmac = crypto.createHmac("sha256", `${getResetSecret()}:${currentPasswordHash}`);
-  hmac.update(payloadData);
-  const signature = hmac.digest("hex");
-
-  // Raw URL-safe token: base64url(payloadData) + '.' + signature
-  const rawToken = `${Buffer.from(payloadData).toString("base64url")}.${signature}`;
-
-  // Dedicated PasswordResetToken model record
-  const tokenRecord = PasswordResetToken.create({
-    userId: email,
-    rawToken,
-    id: tokenId,
-    expiresInMs: 24 * 60 * 60 * 1000
-  });
-
-  passwordResetTokens.push(tokenRecord);
-  try {
-    writeData(resetTokensFile, passwordResetTokens);
-  } catch {
-    // Non-fatal if direct write fails outside transaction
-  }
-
-  // Memory map for single-instance fast path and backwards compatibility
-  resetTokens.set(tokenId, {
-    email,
-    expiresAt,
-    tokenHash: tokenRecord.tokenHash
-  });
-  resetTokens.set(rawToken, {
-    email,
-    expiresAt,
-    tokenHash: tokenRecord.tokenHash
-  });
-
-  return rawToken;
+// Hash a raw reset token for safe storage (SHA-256 of the raw UUID)
+function hashResetToken(rawToken) {
+  return crypto.createHash("sha256").update(rawToken).digest("hex");
 }
 
 function knownCategoryHint(description) {
@@ -275,12 +193,14 @@ app.post("/api/auth/signup", async (req, res) => {
   }
 
   try {
+    const hashedPassword = await bcrypt.hash(String(password), 10);
+
     await runTransaction(async () => {
       if (users.has(normalizedEmail)) {
         throw Object.assign(new Error("An account with this email already exists."), { statusCode: 409 });
       }
 
-      users.set(normalizedEmail, { name: String(name).trim(), password: hashPassword(password) });
+      users.set(normalizedEmail, { name: String(name).trim(), password: hashedPassword });
     });
 
     return res.status(201).json({ message: "Account created successfully." });
@@ -296,32 +216,55 @@ app.post("/api/auth/login", async (req, res) => {
   const normalizedName = String(name || "").trim();
   const user = users.get(normalizedEmail);
 
-  if (!user || user.name !== normalizedName || hashPassword(String(password || "")) !== user.password) {
+  if (!user || user.name !== normalizedName) {
+    return res.status(401).json({ message: "Invalid email or password." });
+  }
+
+  const passwordMatch = await bcrypt.compare(String(password || ""), user.password);
+  if (!passwordMatch) {
     return res.status(401).json({ message: "Invalid email or password." });
   }
 
   return res.json({ message: "Login successful.", user: { name: user.name, email: normalizedEmail } });
 });
 
-app.post("/api/auth/forgot-password", (req, res) => {
+
+app.post("/api/auth/forgot-password", async (req, res) => {
   const email = String(req.body.email || "").trim().toLowerCase();
 
   if (!email) {
     return res.status(400).json({ message: "Email is required." });
   }
 
+  // Always return the same message so we don't reveal whether the account exists.
   if (!users.has(email)) {
     return res.status(200).json({
       message: "If an account exists for this email, a reset link has been sent."
     });
   }
 
-  const resetToken = createResetToken(email);
-  const resetUrl = `/reset-password.html?token=${encodeURIComponent(resetToken)}`;
+  // Generate a new secure token and store only its hash on the user record.
+  // Each new request replaces the previous token, so multiple requests are safe.
+  const rawToken = crypto.randomUUID();
+  const tokenHash = hashResetToken(rawToken);
+  const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes
+
+  try {
+    await runTransaction(async () => {
+      const user = users.get(email);
+      user.resetTokenHash = tokenHash;
+      user.resetTokenExpiry = expiresAt;
+    });
+  } catch (err) {
+    console.error("forgot-password transaction error:", err);
+    return res.status(500).json({ message: "Internal server error." });
+  }
+
+  const resetUrl = `/reset-password.html?token=${encodeURIComponent(rawToken)}`;
 
   return res.status(200).json({
     message: "Password reset link created successfully.",
-    resetToken,
+    resetToken: rawToken,
     resetUrl
   });
 });
@@ -329,158 +272,51 @@ app.post("/api/auth/forgot-password", (req, res) => {
 app.post("/api/auth/reset-password", async (req, res) => {
   const token = String(req.body.token || "").trim();
   const password = String(req.body.password || "").trim();
-  const startTime = Date.now();
 
   if (!token || !password) {
-    console.log(`[reset-password] ${Date.now() - startTime}ms - missing token or password`);
     return res.status(400).json({ message: "Reset token and password are required." });
   }
 
   if (password.length < 6) {
-    console.log(`[reset-password] ${Date.now() - startTime}ms - short password`);
     return res.status(400).json({ message: "Password must be at least 6 characters long." });
   }
 
-  const tokenHash = PasswordResetToken.hashToken(token);
-  let resolvedEmail = null;
-  let resolvedTokenId = null;
+  // Hash the incoming token and find the matching user.
+  const tokenHash = hashResetToken(token);
+  let matchedEmail = null;
+  let matchedUser = null;
 
-  // 1. Verify signed token format: <base64urlPayload>.<signature>
-  if (token.includes(".")) {
-    const parts = token.split(".");
-    if (parts.length === 2) {
-      try {
-        const payloadStr = Buffer.from(parts[0], "base64url").toString("utf8");
-        const [id, emailFromPayload, expStr] = payloadStr.split(".");
-        const expiresAt = Number(expStr);
-
-        if (id && emailFromPayload && Number.isFinite(expiresAt)) {
-          if (Date.now() > expiresAt) {
-            console.log(`[reset-password] ${Date.now() - startTime}ms - token expired`);
-          return res.status(400).json({ message: "Invalid or expired reset token." });
-          }
-
-          // Attempt to locate the token record first (covers email change scenario)
-          const matchedRecord = passwordResetTokens.find(
-            (record) => record.tokenHash === tokenHash || (id && record.id === id) || record.id === token
-          );
-          if (matchedRecord) {
-            resolvedEmail = matchedRecord.userId;
-            resolvedTokenId = matchedRecord.id;
-          }
-
-          // If we have a resolved email (from record), verify signature against that user's current password hash
-          if (resolvedEmail) {
-            const userObj = users.get(resolvedEmail);
-            if (userObj) {
-              const hmac = crypto.createHmac("sha256", `${getResetSecret()}:${userObj.password}`);
-              hmac.update(payloadStr);
-              const expectedSig = hmac.digest("hex");
-              const sigBuf = Buffer.from(parts[1], "hex");
-              const expBuf = Buffer.from(expectedSig, "hex");
-              if (sigBuf.length === expBuf.length && crypto.timingSafeEqual(sigBuf, expBuf)) {
-                // signature valid, keep resolvedEmail
-              } else {
-                // signature mismatch, invalidate resolvedEmail
-                resolvedEmail = null;
-                resolvedTokenId = null;
-              }
-            }
-          }
-
-          // If still not resolved, fall back to legacy in‑memory store (unchanged)
-        }
-      } catch {
-        // Malformed token format – ignore and let later checks handle it
-      }
+  for (const [email, user] of users.entries()) {
+    if (user.resetTokenHash && user.resetTokenHash === tokenHash) {
+      matchedEmail = email;
+      matchedUser = user;
+      break;
     }
   }
 
-  // 2. Check PasswordResetToken store by tokenHash or tokenId
-  const matchedRecord = passwordResetTokens.find(
-    (record) =>
-      record.tokenHash === tokenHash ||
-      (resolvedTokenId && record.id === resolvedTokenId) ||
-      record.id === token
-  );
-
-  // If token record exists and was already used, reject
-  if (matchedRecord && matchedRecord.usedAt !== null && matchedRecord.usedAt !== undefined) {
-    console.log(`[reset-password] ${Date.now() - startTime}ms - token already used`);
+  if (!matchedUser) {
     return res.status(400).json({ message: "Invalid or expired reset token." });
   }
 
-  // If token record exists and has expired, reject
-  if (matchedRecord && matchedRecord.expiresAt) {
-    const recExpiry = new Date(matchedRecord.expiresAt).getTime();
-    if (!Number.isNaN(recExpiry) && Date.now() > recExpiry) {
-      console.log(`[reset-password] ${Date.now() - startTime}ms - token record expired`);
-return res.status(400).json({ message: "Invalid or expired reset token." });
-    }
-  }
-
-  // Resolve email from record if not already resolved via cryptographic signature
-  if (!resolvedEmail && matchedRecord) {
-    resolvedEmail = matchedRecord.userId;
-    resolvedTokenId = matchedRecord.id;
-  }
-
-  // Fallback to in-memory store for legacy tokens
-  if (!resolvedEmail) {
-    const memoryReq = resetTokens.get(token);
-    if (memoryReq) {
-      if (Date.now() > memoryReq.expiresAt) {
-        resetTokens.delete(token);
-        return res.status(400).json({ message: "Invalid or expired reset token." });
-      }
-      resolvedEmail = memoryReq.email;
-    }
-  }
-
-  // Reject if token is unrecognized or invalid
-  if (!resolvedEmail) {
-    console.log(`[reset-password] ${Date.now() - startTime}ms - token unrecognized`);
-return res.status(400).json({ message: "Invalid or expired reset token." });
-  }
-
-  const user = users.get(resolvedEmail);
-  if (!user) {
-    console.log(`[reset-password] ${Date.now() - startTime}ms - user not found`);
-return res.status(400).json({ message: "User not found for this reset token." });
+  // Check expiry.
+  if (!matchedUser.resetTokenExpiry || Date.now() > matchedUser.resetTokenExpiry) {
+    return res.status(400).json({ message: "Invalid or expired reset token." });
   }
 
   try {
+    const hashedPassword = await bcrypt.hash(password, 10);
+
     await runTransaction(async () => {
-      // Update password hash
-      user.password = hashPassword(password);
-
-      // Mark the token as used in the dedicated store
-      const nowIso = new Date().toISOString();
-      if (matchedRecord) {
-        matchedRecord.usedAt = nowIso;
-      } else {
-        passwordResetTokens.push({
-          id: resolvedTokenId || crypto.randomUUID(),
-          userId: resolvedEmail,
-          tokenHash,
-          expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-          createdAt: nowIso,
-          usedAt: nowIso
-        });
-      }
-
-      // Invalidate memory map references
-      resetTokens.delete(token);
-      if (resolvedTokenId) {
-        resetTokens.delete(resolvedTokenId);
-      }
+      matchedUser.password = hashedPassword;
+      // Invalidate the token so it cannot be reused.
+      delete matchedUser.resetTokenHash;
+      delete matchedUser.resetTokenExpiry;
     });
 
-    console.log(`[reset-password] ${Date.now() - startTime}ms - success`);
-return res.status(200).json({ message: "Password reset successfully." });
-  } catch (error) {
-    const statusCode = error.statusCode || 500;
-    return res.status(statusCode).json({ message: error.message || "Could not reset password." });
+    return res.status(200).json({ message: "Password reset successfully." });
+  } catch (err) {
+    console.error("reset-password error:", err);
+    return res.status(500).json({ message: "Internal server error." });
   }
 });
 
@@ -579,7 +415,8 @@ app.delete("/api/expenses/:id", async (req, res) => {
 });
 
 app.get("/api/leaderboard", (req, res) => {
-  const limit = 10; // Fixed limit to avoid overly large leaderboard
+  const requestedLimit = Number.parseInt(req.query.limit, 10);
+  const limit = Number.isInteger(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 100) : 10;
   const totalsByEmail = {};
 
   // Aggregate each expense once, then join totals to users in one lookup pass.
