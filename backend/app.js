@@ -4,6 +4,7 @@ const path = require("path");
 const crypto = require("crypto");
 const fs = require("fs");
 require("dotenv").config();
+const PasswordResetToken = require("./models/PasswordResetToken");
 
 const app = express();
 const sourceDataDirectory = path.join(__dirname, "data");
@@ -12,6 +13,7 @@ const dataDirectory = process.env.VERCEL === "1"
   : sourceDataDirectory;
 const usersFile = path.join(dataDirectory, "users.json");
 const expensesFile = path.join(dataDirectory, "expenses.json");
+const resetTokensFile = path.join(dataDirectory, "password-reset-tokens.json");
 const expenseCategories = [
   "Food",
   "Groceries",
@@ -30,10 +32,15 @@ const expenseCategories = [
 fs.mkdirSync(dataDirectory, { recursive: true });
 
 if (dataDirectory !== sourceDataDirectory) {
-  for (const fileName of ["users.json", "expenses.json"]) {
+  for (const fileName of ["users.json", "expenses.json", "password-reset-tokens.json"]) {
     const targetFile = path.join(dataDirectory, fileName);
     if (!fs.existsSync(targetFile)) {
-      fs.copyFileSync(path.join(sourceDataDirectory, fileName), targetFile);
+      const sourceFile = path.join(sourceDataDirectory, fileName);
+      if (fs.existsSync(sourceFile)) {
+        fs.copyFileSync(sourceFile, targetFile);
+      } else {
+        fs.writeFileSync(targetFile, JSON.stringify(fileName.endsWith("tokens.json") ? [] : {}, null, 2));
+      }
     }
   }
 }
@@ -53,7 +60,16 @@ function writeData(filePath, data) {
 const users = new Map(Object.entries(readData(usersFile, {})));
 const expenses = readData(expensesFile, {});
 const resetTokens = new Map();
+const passwordResetTokens = readData(resetTokensFile, []);
 let nextExpenseId = Object.values(expenses).flat().reduce((highestId, expense) => Math.max(highestId, expense.id || 0), 0) + 1;
+
+function getResetSecret() {
+  return (
+    process.env.RESET_TOKEN_SECRET ||
+    process.env.JWT_SECRET ||
+    "expense-tracker-secure-reset-salt-secret-key"
+  );
+}
 
 function deepClone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -70,18 +86,25 @@ function restoreSnapshot(snapshot) {
   }
 
   Object.assign(expenses, snapshot.expenses);
+
+  passwordResetTokens.length = 0;
+  if (Array.isArray(snapshot.passwordResetTokens)) {
+    passwordResetTokens.push(...snapshot.passwordResetTokens);
+  }
 }
 
 async function runTransaction(operation) {
   const snapshot = {
     users: deepClone(Object.fromEntries(users)),
-    expenses: deepClone(expenses)
+    expenses: deepClone(expenses),
+    passwordResetTokens: deepClone(passwordResetTokens)
   };
 
   try {
     await operation();
     writeData(usersFile, Object.fromEntries(users));
     writeData(expensesFile, expenses);
+    writeData(resetTokensFile, passwordResetTokens);
     return true;
   } catch (error) {
     restoreSnapshot(snapshot);
@@ -94,12 +117,51 @@ function hashPassword(password) {
 }
 
 function createResetToken(email) {
-  const token = crypto.randomUUID();
-  resetTokens.set(token, {
-    email,
-    expiresAt: Date.now() + 15 * 60 * 1000
+  const tokenId = crypto.randomUUID();
+  const expiresAt = Date.now() + 15 * 60 * 1000;
+  const user = users.get(email);
+  const currentPasswordHash = user ? user.password : "";
+
+  // Combine unique token ID, email, expiry, and random salt
+  const randomSalt = crypto.randomBytes(16).toString("hex");
+  const payloadData = `${tokenId}.${email}.${expiresAt}.${randomSalt}`;
+
+  // HMAC-SHA256 signature using secret + current password hash
+  const hmac = crypto.createHmac("sha256", `${getResetSecret()}:${currentPasswordHash}`);
+  hmac.update(payloadData);
+  const signature = hmac.digest("hex");
+
+  // Raw URL-safe token: base64url(payloadData) + '.' + signature
+  const rawToken = `${Buffer.from(payloadData).toString("base64url")}.${signature}`;
+
+  // Dedicated PasswordResetToken model record
+  const tokenRecord = PasswordResetToken.create({
+    userId: email,
+    rawToken,
+    id: tokenId,
+    expiresInMs: 15 * 60 * 1000
   });
-  return token;
+
+  passwordResetTokens.push(tokenRecord);
+  try {
+    writeData(resetTokensFile, passwordResetTokens);
+  } catch {
+    // Non-fatal if direct write fails outside transaction
+  }
+
+  // Memory map for single-instance fast path and backwards compatibility
+  resetTokens.set(tokenId, {
+    email,
+    expiresAt,
+    tokenHash: tokenRecord.tokenHash
+  });
+  resetTokens.set(rawToken, {
+    email,
+    expiresAt,
+    tokenHash: tokenRecord.tokenHash
+  });
+
+  return rawToken;
 }
 
 function knownCategoryHint(description) {
@@ -276,34 +338,124 @@ app.post("/api/auth/reset-password", async (req, res) => {
     return res.status(400).json({ message: "Password must be at least 6 characters long." });
   }
 
-  const resetRequest = resetTokens.get(token);
+  const tokenHash = PasswordResetToken.hashToken(token);
+  let resolvedEmail = null;
+  let resolvedTokenId = null;
 
-  if (!resetRequest) {
+  // 1. Verify signed token format: <base64urlPayload>.<signature>
+  if (token.includes(".")) {
+    const parts = token.split(".");
+    if (parts.length === 2) {
+      try {
+        const payloadStr = Buffer.from(parts[0], "base64url").toString("utf8");
+        const [id, email, expStr] = payloadStr.split(".");
+        const expiresAt = Number(expStr);
+
+        if (id && email && Number.isFinite(expiresAt)) {
+          if (Date.now() > expiresAt) {
+            return res.status(400).json({ message: "Invalid or expired reset token." });
+          }
+
+          const user = users.get(email);
+          if (!user) {
+            return res.status(400).json({ message: "User not found for this reset token." });
+          }
+
+          // Verify signature with current user.password hash
+          const hmac = crypto.createHmac("sha256", `${getResetSecret()}:${user.password}`);
+          hmac.update(payloadStr);
+          const expectedSig = hmac.digest("hex");
+
+          const sigBuf = Buffer.from(parts[1], "hex");
+          const expBuf = Buffer.from(expectedSig, "hex");
+
+          if (sigBuf.length === expBuf.length && crypto.timingSafeEqual(sigBuf, expBuf)) {
+            resolvedEmail = email;
+            resolvedTokenId = id;
+          }
+        }
+      } catch {
+        // Malformed token format
+      }
+    }
+  }
+
+  // 2. Check PasswordResetToken store by tokenHash or tokenId
+  const matchedRecord = passwordResetTokens.find(
+    (record) =>
+      record.tokenHash === tokenHash ||
+      (resolvedTokenId && record.id === resolvedTokenId) ||
+      record.id === token
+  );
+
+  // If token record exists and was already used, reject
+  if (matchedRecord && matchedRecord.usedAt !== null && matchedRecord.usedAt !== undefined) {
     return res.status(400).json({ message: "Invalid or expired reset token." });
   }
 
-  if (Date.now() > resetRequest.expiresAt) {
-    resetTokens.delete(token);
+  // If token record exists and has expired, reject
+  if (matchedRecord && matchedRecord.expiresAt) {
+    const recExpiry = new Date(matchedRecord.expiresAt).getTime();
+    if (!Number.isNaN(recExpiry) && Date.now() > recExpiry) {
+      return res.status(400).json({ message: "Invalid or expired reset token." });
+    }
+  }
+
+  // Resolve email from record if not already resolved via cryptographic signature
+  if (!resolvedEmail && matchedRecord) {
+    resolvedEmail = matchedRecord.userId;
+    resolvedTokenId = matchedRecord.id;
+  }
+
+  // Fallback to in-memory store for legacy tokens
+  if (!resolvedEmail) {
+    const memoryReq = resetTokens.get(token);
+    if (memoryReq) {
+      if (Date.now() > memoryReq.expiresAt) {
+        resetTokens.delete(token);
+        return res.status(400).json({ message: "Invalid or expired reset token." });
+      }
+      resolvedEmail = memoryReq.email;
+    }
+  }
+
+  // Reject if token is unrecognized or invalid
+  if (!resolvedEmail) {
     return res.status(400).json({ message: "Invalid or expired reset token." });
   }
 
-  const { email } = resetRequest;
-
-  if (!users.has(email)) {
-    resetTokens.delete(token);
+  const user = users.get(resolvedEmail);
+  if (!user) {
     return res.status(400).json({ message: "User not found for this reset token." });
   }
 
   try {
     await runTransaction(async () => {
-      const user = users.get(email);
-      if (!user) {
-        throw Object.assign(new Error("User not found."), { statusCode: 404 });
-      }
+      // Update password hash
       user.password = hashPassword(password);
+
+      // Mark the token as used in the dedicated store
+      const nowIso = new Date().toISOString();
+      if (matchedRecord) {
+        matchedRecord.usedAt = nowIso;
+      } else {
+        passwordResetTokens.push({
+          id: resolvedTokenId || crypto.randomUUID(),
+          userId: resolvedEmail,
+          tokenHash,
+          expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+          createdAt: nowIso,
+          usedAt: nowIso
+        });
+      }
+
+      // Invalidate memory map references
+      resetTokens.delete(token);
+      if (resolvedTokenId) {
+        resetTokens.delete(resolvedTokenId);
+      }
     });
 
-    resetTokens.delete(token);
     return res.status(200).json({ message: "Password reset successfully." });
   } catch (error) {
     const statusCode = error.statusCode || 500;

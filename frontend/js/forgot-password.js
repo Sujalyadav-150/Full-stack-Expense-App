@@ -21,7 +21,7 @@ form.addEventListener("submit", async (event) => {
     }
 
     if (result.resetUrl) {
-      message.textContent = "Reset link created. Redirecting...";
+      message.innerHTML = `Reset link created. <a href="${result.resetUrl}">Click here if not redirected automatically</a>.`;
       window.location.href = result.resetUrl;
       return;
     }

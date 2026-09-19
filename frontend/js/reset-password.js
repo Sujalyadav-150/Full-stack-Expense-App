@@ -2,7 +2,8 @@ const form = document.getElementById("resetPasswordForm");
 const message = document.getElementById("message");
 
 const urlParams = new URLSearchParams(window.location.search);
-const token = urlParams.get("token");
+const rawToken = urlParams.get("token");
+const token = rawToken ? rawToken.trim() : "";
 
 if (!token) {
   message.textContent = "Missing reset token. Please request a new password reset link.";
