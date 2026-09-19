@@ -1,4 +1,41 @@
+const mongoose = require("mongoose");
 const crypto = require("crypto");
+
+const tokenSchema = new mongoose.Schema({
+  id: {
+    type: String,
+    required: true,
+    unique: true
+  },
+  userId: {
+    type: String,
+    required: true,
+    lowercase: true,
+    trim: true
+  },
+  tokenHash: {
+    type: String,
+    required: true,
+    index: true
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  expiresAt: {
+    type: Date,
+    required: true
+  },
+  usedAt: {
+    type: Date,
+    default: null
+  }
+});
+
+tokenSchema.index({ tokenHash: 1 });
+tokenSchema.index({ userId: 1 });
+
+const MongooseToken = mongoose.models.PasswordResetToken || mongoose.model("PasswordResetToken", tokenSchema);
 
 class PasswordResetToken {
   /**
@@ -11,15 +48,15 @@ class PasswordResetToken {
   }
 
   /**
-   * Create a new password reset token entity.
+   * Create a new password reset token record.
    * @param {Object} params
-   * @param {string} params.userId - User identifier (e.g. normalized email)
+   * @param {string} params.userId - User identifier (normalized email)
    * @param {string} params.rawToken - The raw token issued to the user
    * @param {string} [params.id] - Optional unique token ID
    * @param {number} [params.expiresInMs=900000] - Token TTL in milliseconds (default: 15 min)
    * @returns {Object}
    */
-  static create({ userId, rawToken, id = null, expiresInMs = 24 * 60 * 60 * 1000 }) {
+  static create({ userId, rawToken, id = null, expiresInMs = 15 * 60 * 1000 }) {
     const tokenId = id || crypto.randomUUID();
     const tokenHash = this.hashToken(rawToken);
     const now = Date.now();
@@ -28,8 +65,8 @@ class PasswordResetToken {
       id: tokenId,
       userId: String(userId || "").trim().toLowerCase(),
       tokenHash,
-      expiresAt: new Date(now + expiresInMs).toISOString(),
       createdAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + expiresInMs).toISOString(),
       usedAt: null
     };
   }
@@ -47,5 +84,7 @@ class PasswordResetToken {
     return true;
   }
 }
+
+PasswordResetToken.MongooseModel = MongooseToken;
 
 module.exports = PasswordResetToken;

@@ -1,7 +1,7 @@
 {
   "sy1908412@gmail.com": {
     "name": "sujal",
-    "password": "256502429dfa883a53e9c76ded209cc33446760ff6e10f81971916f6551c9330c400db04e9f0d29ead1490294be5f923f5cf78ca76a8b8eece5b180a3fe58af0"
+    "password": "b1487bbf62071fa4680f9598b76fe25e86eaee70dc37e77a2f3cf8c1a3a7dc2860abeb92286b90a0ec80f2b079d828a8882aa22bff8c6198c0042a9b78efd4df"
   },
   "sujayadavteliya1234@gmail.com": {
     "name": "sujal yadav",
@@ -36,6 +36,18 @@
     "password": "1036acd4d7ab521766d80e3d892b8a80a7f216cbc6d1061b0af7ca54bc366b7dba15f07cfb588e3d6d0d2eb880d1b85a11f97174c734475c60a856a77258cc1d"
   },
   "test-user-1789809570230@example.com": {
+    "name": "Test Runner",
+    "password": "1036acd4d7ab521766d80e3d892b8a80a7f216cbc6d1061b0af7ca54bc366b7dba15f07cfb588e3d6d0d2eb880d1b85a11f97174c734475c60a856a77258cc1d"
+  },
+  "tmp@example.com": {
+    "name": "Tmp",
+    "password": "81591c2349d7b90bf23ee071503081c167f980663b0322338d9b9bdff3d3016fcd1119d528d66b32d9343599120bbc55c3f3538c7bc7bafbef19da5d667cf64c"
+  },
+  "testauth@example.com": {
+    "name": "TestUser",
+    "password": "$2b$10$Xy7NgGE5701AwdDMYaLQCuZoeG3aWAr03/wMbSCXzPBY4tH6EZWfi"
+  },
+  "test-user-1789822923722@example.com": {
     "name": "Test Runner",
     "password": "1036acd4d7ab521766d80e3d892b8a80a7f216cbc6d1061b0af7ca54bc366b7dba15f07cfb588e3d6d0d2eb880d1b85a11f97174c734475c60a856a77258cc1d"
   }

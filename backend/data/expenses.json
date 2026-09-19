@@ -29,5 +29,6 @@
       "category": "Other",
       "categorySource": "fallback"
     }
-  ]
+  ],
+  "verify@example.com": []
 }
