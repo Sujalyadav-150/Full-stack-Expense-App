@@ -19,7 +19,7 @@ class PasswordResetToken {
    * @param {number} [params.expiresInMs=900000] - Token TTL in milliseconds (default: 15 min)
    * @returns {Object}
    */
-  static create({ userId, rawToken, id = null, expiresInMs = 15 * 60 * 1000 }) {
+  static create({ userId, rawToken, id = null, expiresInMs = 24 * 60 * 60 * 1000 }) {
     const tokenId = id || crypto.randomUUID();
     const tokenHash = this.hashToken(rawToken);
     const now = Date.now();

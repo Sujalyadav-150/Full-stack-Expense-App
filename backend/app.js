@@ -118,7 +118,7 @@ function hashPassword(password) {
 
 function createResetToken(email) {
   const tokenId = crypto.randomUUID();
-  const expiresAt = Date.now() + 15 * 60 * 1000;
+  const expiresAt = Date.now() + 24 * 60 * 60 * 1000;
   const user = users.get(email);
   const currentPasswordHash = user ? user.password : "";
 
@@ -139,7 +139,7 @@ function createResetToken(email) {
     userId: email,
     rawToken,
     id: tokenId,
-    expiresInMs: 15 * 60 * 1000
+    expiresInMs: 24 * 60 * 60 * 1000
   });
 
   passwordResetTokens.push(tokenRecord);
@@ -579,8 +579,7 @@ app.delete("/api/expenses/:id", async (req, res) => {
 });
 
 app.get("/api/leaderboard", (req, res) => {
-  const requestedLimit = Number.parseInt(req.query.limit, 10);
-  const limit = Number.isInteger(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 100) : 10;
+  const limit = 10; // Fixed limit to avoid overly large leaderboard
   const totalsByEmail = {};
 
   // Aggregate each expense once, then join totals to users in one lookup pass.

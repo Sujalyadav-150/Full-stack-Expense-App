@@ -34,5 +34,9 @@
   "test-user-1789806553084@example.com": {
     "name": "Test Runner",
     "password": "1036acd4d7ab521766d80e3d892b8a80a7f216cbc6d1061b0af7ca54bc366b7dba15f07cfb588e3d6d0d2eb880d1b85a11f97174c734475c60a856a77258cc1d"
+  },
+  "test-user-1789809570230@example.com": {
+    "name": "Test Runner",
+    "password": "1036acd4d7ab521766d80e3d892b8a80a7f216cbc6d1061b0af7ca54bc366b7dba15f07cfb588e3d6d0d2eb880d1b85a11f97174c734475c60a856a77258cc1d"
   }
 }
