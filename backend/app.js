@@ -7,9 +7,22 @@ const bcrypt = require("bcryptjs");
 require("dotenv").config();
 
 const app = express();
-const dataDirectory = path.join(__dirname, "data");
-const usersFile = path.join(dataDirectory, "users.json");
-const expensesFile = path.join(dataDirectory, "expenses.json");
+// On Vercel, /var/task is read-only — use /tmp which is always writable.
+const isVercel = !!(process.env.VERCEL || process.env.VERCEL_ENV);
+const dataDirectory  = path.join(__dirname, "data");
+const tmpDirectory   = isVercel ? "/tmp" : dataDirectory;
+const usersFile      = path.join(tmpDirectory, "users.json");
+const expensesFile   = path.join(tmpDirectory, "expenses.json");
+const bundledUsers   = path.join(dataDirectory, "users.json");
+const bundledExpenses = path.join(dataDirectory, "expenses.json");
+
+// On a cold start, seed /tmp from the bundled JSON so existing users are preserved.
+if (isVercel) {
+  if (!fs.existsSync(usersFile) && fs.existsSync(bundledUsers))
+    fs.copyFileSync(bundledUsers, usersFile);
+  if (!fs.existsSync(expensesFile) && fs.existsSync(bundledExpenses))
+    fs.copyFileSync(bundledExpenses, expensesFile);
+}
 const expenseCategories = [
   "Food", "Groceries", "Transport", "Shopping", "Electronics",
   "Health", "Entertainment", "Bills & Utilities", "Housing",
